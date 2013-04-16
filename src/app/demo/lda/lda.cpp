@@ -259,7 +259,23 @@ class topk_aggregator
 		}
 		return *this;
 	} 
-	
+    /*static topk_aggregator aggregator(icontext_type& context,
+			                             const graph_type::vertex_type& vertex) {
+		topk_aggregator ret_value;
+		const vertex_data& vdata = vertex.data();
+		ret_value.nchanges = vdata.nchanges;
+		ret_value.nupdates = vdata.nupdates;
+		if(is_word(vertex)) {
+			const graphlab::vertex_id_type wordid = vertex.id();
+			ret_value.top_words.resize(vdata.factor.size());
+			for(size_t i = 0; i < vdata.factor.size(); ++i) {
+				const cw_pair_type pair(vdata.factor[i], wordid);
+				ret_value.top_words[i].insert(pair);
+			}
+		}
+		return ret_value;
+	} // end of map function
+	*/
 	static void finalize(icontext_type& context, const topk_aggregator& total)
 	{
 		
@@ -271,7 +287,7 @@ class topk_aggregator
 struct global_counts_aggregator
 {
 	typedef graph_type::vertex_type vertex_type;
-	static factor_type map(icontext_type& context, const vertex_type& vertex)
+	static factor_type aggregator(icontext_type& context, const vertex_type& vertex)
 	{
 		return vertex.data().factor;
 	}
@@ -302,7 +318,7 @@ public:
 		lik_topics += other.lik_topics;
 		return *this;
 	}
-	static likelihood_aggregator map(vertex_type& vertex)
+	static likelihood_aggregator aggregator(vertex_type& vertex)
 	{
 		const factor_type& factor = vertex.data().factor;
 		likelihood_aggregator ret;
@@ -349,7 +365,7 @@ struct signal_only
 	}
 };// end of signal
 
-*/
+
 /*=========下面这是读入普通文件然后传入数据库中==================*/
 class Document
 {
@@ -512,6 +528,6 @@ int main()
 	
 	NTOKENS =  engine ->map_reduce_edges<size_t>(count_tokens); // edge的操作还没有
 
-	
+		
 //	engine -> map_reduce_vertices< saedb::empty >( signal_only::docs );
 }

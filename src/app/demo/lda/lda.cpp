@@ -4,8 +4,12 @@
 #include <fstream>
 #include <ctime>
 #include <cstdlib>
+#include <sstream>
 #include "sae_include.hpp"
 using  namespace sae::io;
+#define see(x) cout<<#x<<" "<<x;
+#define se(x)  cout<<x<<" ";
+#define sea(x) cout<<#x<<" "<<x<<endl; 
 #define sz(x) x.size()
 
 
@@ -65,10 +69,12 @@ float BURNIN = -1;  // less than 0 then sampler will run indefinitely.
 /* ============= 下面是graph的信息======================*/
 struct vertex_data
 {
+	int id;
 	int nupdates;
 	int nchanges;
 	factor_type factor;
-	vertex_data() : nupdates(0), nchanges(0), factor(NTOPICS) {};
+	vertex_data(){};
+	vertex_data(int idd) : id(idd), nupdates(0), nchanges(0), factor(NTOPICS) {};
 }; //end of vertex_data
 
 struct edge_data
@@ -296,7 +302,7 @@ public:
 		lik_topics += other.lik_topics;
 		return *this;
 	}
-	static likelihood_aggregator map(icontext_type& context, vertex_type& vertex)
+	static likelihood_aggregator map(vertex_type& vertex)
 	{
 		const factor_type& factor = vertex.data().factor;
 		likelihood_aggregator ret;
@@ -328,32 +334,173 @@ public:
 	}
 }; // end of likelihood_aggregator struct
 
+/*
 struct signal_only
 {
-	static saedb::empty docs(icontext_type& context, graph_type::vertex_type& vertex)
+	static saedb::empty docs( graph_type::vertex_type& vertex)
 	{
 		if(is_doc(vertex))	context.signal(vertex);
 			return saedb::empty();
 	}
-	static saedb::empty words(icontext_type& context,  graph_type:: vertex_type& vertex)
+	static saedb::empty words( graph_type:: vertex_type& vertex)
 	{
 		if(is_word(vertex)) context.signal(vertex);
 			return saedb::empty();
 	}
 };// end of signal
 
-
-
-/*=========下面这是读入普通文件然后传入==================*/
-
-void init()
+*/
+/*=========下面这是读入普通文件然后传入数据库中==================*/
+class Document
 {
-	
+public:
+	int id;
+	string title;
+	vector<int> counts;
+	vector<int>	words;
+};
+
+string replaceall(string a)//将所有大写变成小写
+{
+	for(int i=0; i<sz(a); i++)
+	{
+		a[i]=tolower(a[i]);
+	}
+	return a;
 }
+
+class Util
+{
+public:
+	static vector< string > stringtokenize(string a)
+	{
+		stringstream in(a);
+		vector<string> b;
+		
+		while(in>>a)
+		{
+			b.push_back(a);
+		}
+		return b;
+	}
+};
+
+map<string, int>    dict;
+map<string, int>    docMap;
+vector<Document*>   docs;
+vector<string>      wordList;
+
+vector<Document*>  readfile(string file)
+{
+	string s;
+	ifstream fin(file.c_str());
+	map<int, int>	doc_dict;
+	vector<string>terms;
+	vector<Document*>	result;
+	int docid=0;
+	while(getline(fin,s)!=NULL)
+	{
+		docid+=1;
+		Document* doc = new Document();
+		doc-> title = s;
+		getline(fin,s);
+
+		s= replaceall(s);
+		terms = Util::stringtokenize(s);
+		doc_dict.clear();
+		doc->id=docid;
+		for(int i=0; i<sz(terms); i++)
+		{
+			int wid; 
+			map<string, int>::iterator it = dict.find(terms[i]);
+			if(it==dict.end())
+			{
+				wid = sz(dict);
+				dict.insert(make_pair(terms[i],wid));
+				wordList.push_back(terms[i]);
+			}
+			else
+				wid= it->second;
+			
+			int op;
+			if(doc_dict.find(wid)==doc_dict.end())
+			{
+				op = sz(doc_dict);
+				doc_dict.insert(make_pair(wid,op));
+				doc -> words.push_back(wid);
+				doc -> counts.push_back(1);
+			}
+			else
+				doc -> counts[doc_dict[wid]]+=1;
+
+		}	
+		int val = sz(docMap);
+
+		docMap.insert(make_pair(doc->title,val));
+		result.push_back(doc);
+		
+	}
+	printf("read file number: ");cout<<sz(result)<<endl;
+	return result;
+}
+
+void printdata(vector<Document*> doclist)
+{
+
+	printf("output into initdata\n");
+	ofstream file("initdata.txt");
+	Document* now;
+	for(int i=0; i<sz(doclist); i++)
+	{
+		now=doclist[i];
+		for(int j=0; j<sz(now->words); j++)
+		{
+			file<<now->id<<" "<<now->words[j]<<" "<<now->counts[j]<<endl;
+		}
+	}
+}
+/*===========================上面是读入数据传入数据库中===============================================*/
+void readdata(string path)
+{	
+	cout<<"read data from initdata.txt \n"<<endl;
+	int a,b,c;
+	ifstream file("initdata.txt");
+	string s;
+	sae::io::GraphBuilder<int, vertex_data, edge_data>builder;
+	while(getline(file,s)!=NULL)
+	{
+		if(sz(s) <1 || s[0]=='#')
+			continue;
+		stringstream in(s);
+		in>>a>>b>>c;
+		a+=2;
+		a=-a;
+		builder.AddEdge(a, b, edge_data{(size_t)c});
+
+	    builder.AddVertex(a, vertex_data{a});
+		builder.AddVertex(b, vertex_data{b});
+	}
+	builder.Save(path.c_str());	
+}
+   
 
 int main()
 {
+	string documentfile = "1.txt";
+	
+	bool PREPROCESS = true;
+	if(PREPROCESS )
+	{
+		vector<Document*> doclist=readfile(documentfile);
+		printdata(doclist);
+	}
+	
+	
+
+	string graphpath = "lda_graph";
+	readdata(graphpath);
 	graph_type graph;
+	graph.load_format(graphpath);
 	
 	GLOBAL_TOPIC_COUNT.resize(NTOPICS);
 	
@@ -362,6 +509,9 @@ int main()
 	/*===============初始化===============*/
 	NWORDS =  engine ->map_reduce_vertices<size_t>(is_word);
 	NDOCS =  engine ->map_reduce_vertices<size_t>(is_doc);
-	//NTOKENS =  engine ->map_reduce_edges<size_t>(count_tokens);  edge的操作还没有
 	
+	NTOKENS =  engine ->map_reduce_edges<size_t>(count_tokens); // edge的操作还没有
+
+	
+//	engine -> map_reduce_vertices< saedb::empty >( signal_only::docs );
 }

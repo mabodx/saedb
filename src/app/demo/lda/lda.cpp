@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string>
+#include <vector>
+#include <map>
 #include <cmath>
 #include <fstream>
 #include <ctime>
@@ -7,16 +9,18 @@
 #include <sstream>
 #include "sae_include.hpp"
 using  namespace sae::io;
+using namespace std;
+
 #define see(x) cout<<#x<<" "<<x;
 #define se(x)  cout<<x<<" ";
 #define sea(x) cout<<#x<<" "<<x<<endl; 
 #define sz(x) x.size()
 
 
-
 float RESET_PROB = 0.15;
 float TOLERANCE = 1.0E-2;
 
+clock_t start,finish;
 
 typedef saedb::empty message_date_type;
 /* ===============up is the sae engine============================*/
@@ -24,8 +28,8 @@ typedef saedb::empty message_date_type;
 
 typedef int count_type;// Global Types
 
-//typedef std::std::vector< sae::atomic<count_type> > factor_type;// 需要原子操作么？
-typedef std::vector<count_type> factor_type;
+//typedef std::vector< sae::atomic<count_type> > factor_type;// 需要原子操作么？
+typedef vector<count_type> factor_type;
 
 
 inline factor_type& operator+=(factor_type& lvalue, const factor_type& rvalue) 
@@ -46,7 +50,7 @@ typedef int topic_id_type;
 
 #define NULL_TOPIC (topic_id_type(-1))
 
-typedef std::vector< topic_id_type > assignment_type;
+typedef vector< topic_id_type > assignment_type;
 
 
 // ============================================================================
@@ -62,7 +66,7 @@ size_t TOPK = 5;
 size_t INTERVAl = 10;
 
 factor_type GLOBAL_TOPIC_COUNT;
-std::vector<std::string> DICTIONARY;
+vector<string> DICTIONARY;
 size_t MAX_COUNT = 10000;
 float BURNIN = -1;  // less than 0 then sampler will run indefinitely.
 
@@ -80,26 +84,30 @@ struct vertex_data
 struct edge_data
 {
 	int nchanges;
+	int id;
 	assignment_type assignment;
 	edge_data(size_t ntokens =0 ) : nchanges(0), assignment(ntokens, NULL_TOPIC){};
+	edge_data(size_t ntokens =0 ,int idd=0) :id(idd), nchanges(0)
+	{
+		assignment.clear();
+		for(size_t i=0;i< ntokens; i++)
+			assignment.push_back(2);
+	};
 }; // end of edge_data;
 typedef saedb::empty message_date_type;
 typedef saedb::sae_graph<vertex_data, edge_data> graph_type;
 
-inline int is_word( graph_type::vertex_type&  vertex)//这个地方没有引用
+inline int is_word(const graph_type::vertex_type&  vertex)//这个地方没有引用
 {
 	return vertex.num_in_edges() > 0 ? 1:0;
 }
 
-inline int is_doc( graph_type::vertex_type& vertex)//这个地方没有引用
+inline int is_doc(const graph_type::vertex_type& vertex)//这个地方没有引用
 {
 	return vertex.num_out_edges() > 0 ? 1:0;
 }
 
-inline size_t count_tokens(graph_type::edge_type& edge)
-{
-	return edge.data().assignment.size();
-}
+
 
 inline graph_type::vertex_type get_other_vertex(graph_type::edge_type &edge, const graph_type::vertex_type& vertex)
 {
@@ -146,6 +154,7 @@ public:
                  edge_type& edge) const 
 	{
 		gather_type ret(edge.data().nchanges);
+		const edge_data edges = edge.data();
 		const assignment_type& assignment = edge.data().assignment;
 		return ret;
 	}
@@ -165,10 +174,12 @@ public:
 	
 	edge_dir_type scatter_edges(icontext_type& context,
                                 const vertex_type& vertex) const{
-          if(DISABLE_SAMPLING || (BURNIN>0 ||  BURNIN<100 )) 
-		  		return saedb::NO_EDGES;
-		  else return saedb::ALL_EDGES;
-    }//    context.elapsed_seconds();这个值没有
+		finish=clock();
+		double duration = (double)(finish - start) / CLOCKS_PER_SEC;  
+		if(DISABLE_SAMPLING || (BURNIN>0 && duration>BURNIN )) 
+			return saedb::NO_EDGES;
+	   	else return saedb::ALL_EDGES;
+	}//    context.elapsed_seconds();这个值没有
 
 	
 	 void scatter(icontext_type& context, const vertex_type& vertex,
@@ -182,7 +193,9 @@ public:
 		
 		factor_type& word_topic_count = is_doc(vs) ? edge.source().data().factor : edge.target().data().factor;
 
-		std::vector<double> prob(NTOPICS);
+		vector<double> prob(NTOPICS);
+		
+		vertex_data now = vertex.data();
 		assignment_type& assignment = edge.data().assignment;
 		edge.data().nchanges =0 ;
 		
@@ -240,7 +253,7 @@ class topk_aggregator
 {
 	typedef pair<float, saedb::vertex_id_type> cw_pair_type;
 	private:
-		std::vector< std::set<cw_pair_type> >top_words;
+		vector< std::set<cw_pair_type> >top_words;
 		size_t nchanges, nupdates;
 	public:
 		topk_aggregator(size_t nchanges = 0, size_t nupdates =0 ): nchanges(nchanges), nupdates(nupdates){}
@@ -259,14 +272,15 @@ class topk_aggregator
 		}
 		return *this;
 	} 
-    /*static topk_aggregator aggregator(icontext_type& context,
-			                             const graph_type::vertex_type& vertex) {
+    static topk_aggregator aggregator(icontext_type& context,
+			                             const graph_type::vertex_type& vertex) 
+	{		
 		topk_aggregator ret_value;
 		const vertex_data& vdata = vertex.data();
 		ret_value.nchanges = vdata.nchanges;
 		ret_value.nupdates = vdata.nupdates;
 		if(is_word(vertex)) {
-			const graphlab::vertex_id_type wordid = vertex.id();
+			const saedb::vertex_id_type wordid = vertex.id();
 			ret_value.top_words.resize(vdata.factor.size());
 			for(size_t i = 0; i < vdata.factor.size(); ++i) {
 				const cw_pair_type pair(vdata.factor[i], wordid);
@@ -275,7 +289,7 @@ class topk_aggregator
 		}
 		return ret_value;
 	} // end of map function
-	*/
+	
 	static void finalize(icontext_type& context, const topk_aggregator& total)
 	{
 		
@@ -350,20 +364,40 @@ public:
 	}
 }; // end of likelihood_aggregator struct
 
-/*
+
 struct signal_only
 {
-	static saedb::empty docs( graph_type::vertex_type& vertex)
+	static saedb::empty docs(icontext_type& context, graph_type::vertex_type& vertex)
 	{
 		if(is_doc(vertex))	context.signal(vertex);
 			return saedb::empty();
 	}
-	static saedb::empty words( graph_type:: vertex_type& vertex)
+	static saedb::empty words(icontext_type& context, graph_type:: vertex_type& vertex)
 	{
 		if(is_word(vertex)) context.signal(vertex);
 			return saedb::empty();
 	}
 };// end of signal
+
+
+struct judge
+{
+	static	size_t is_word(icontext_type& context, graph_type::vertex_type&  vertex)//这个地方没有引用
+	{
+		return vertex.num_in_edges() > 0 ? 1:0;
+	}
+
+	static	size_t is_doc(icontext_type& context, graph_type::vertex_type& vertex)//这个地方没有引用
+	{
+		return vertex.num_out_edges() > 0 ? 1:0;
+	}
+
+
+	static size_t count_tokens(icontext_type& context, graph_type::edge_type& edge)
+	{
+		return edge.data().assignment.size();
+	}
+};
 
 
 /*=========下面这是读入普通文件然后传入数据库中==================*/
@@ -475,11 +509,11 @@ void printdata(vector<Document*> doclist)
 		}
 	}
 }
-/*===========================上面是读入数据传入数据库中===============================================*/
+///*===========================上面是读入数据传入数据库中===============================================
 void readdata(string path)
 {	
 	cout<<"read data from initdata.txt \n"<<endl;
-	int a,b,c;
+	int a,b,c,id=0;
 	ifstream file("initdata.txt");
 	string s;
 	sae::io::GraphBuilder<int, vertex_data, edge_data>builder;
@@ -491,10 +525,11 @@ void readdata(string path)
 		in>>a>>b>>c;
 		a+=2;
 		a=-a;
-		builder.AddEdge(a, b, edge_data{(size_t)c});
+		edge_data now =edge_data(c,id++);
+		builder.AddEdge(a, b, now);//我感觉这个里面有错误，怎么验证传入的东西和loatmat里面的东西没错？。
 
-	    builder.AddVertex(a, vertex_data{a});
-		builder.AddVertex(b, vertex_data{b});
+	    builder.AddVertex(a, vertex_data(a));
+		builder.AddVertex(b, vertex_data(b));
 	}
 	builder.Save(path.c_str());	
 }
@@ -504,7 +539,7 @@ int main()
 {
 	string documentfile = "1.txt";
 	
-	bool PREPROCESS = true;
+	bool PREPROCESS = false;
 	if(PREPROCESS )
 	{
 		vector<Document*> doclist=readfile(documentfile);
@@ -522,12 +557,20 @@ int main()
 	
 	saedb::IEngine<cgs_lda_vertex_program> *engine = new saedb::EngineDelegate<cgs_lda_vertex_program>(graph);
 	
-	/*===============初始化===============*/
-	NWORDS =  engine ->map_reduce_vertices<size_t>(is_word);
-	NDOCS =  engine ->map_reduce_vertices<size_t>(is_doc);
+	//===============初始化===============
+	NWORDS =  engine ->map_reduce_vertices<size_t>(judge::is_word);
+	NDOCS =  engine ->map_reduce_vertices<size_t>(judge::is_doc);
 	
-	NTOKENS =  engine ->map_reduce_edges<size_t>(count_tokens); // edge的操作还没有
+	NTOKENS =  engine ->map_reduce_edges<size_t>(judge::count_tokens); // edge的操作还没有
 
 		
-//	engine -> map_reduce_vertices< saedb::empty >( signal_only::docs );
+	engine -> map_reduce_vertices< saedb::empty >( signal_only::docs );
+	
+	start=clock();
+ 	cgs_lda_vertex_program::DISABLE_SAMPLING = false;
+	engine->start();
+	
+ 	cgs_lda_vertex_program::DISABLE_SAMPLING = true;
+	engine->signalAll();
+	engine->start();
 }
